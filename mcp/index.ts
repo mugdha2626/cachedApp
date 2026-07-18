@@ -12,7 +12,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CdpClient } from "@coinbase/cdp-sdk"
 
 const RESOURCE_SERVER_URL = process.env.RESOURCE_SERVER_URL ?? "http://localhost:8000"
-const ENDPOINT_PATH = process.env.ENDPOINT_PATH ?? "/research"
+const ENDPOINT_PATH = process.env.ENDPOINT_PATH ?? "/acquire-research"
 const BUYER_ACCOUNT_NAME = process.env.BUYER_ACCOUNT_NAME ?? "cacheapp-buyer"
 
 const cdp = new CdpClient()
@@ -62,9 +62,11 @@ function buildServer(): McpServer {
   })
 
   server.tool(
-    "fetch-research",
-    "Buy a deep-research report from a CacheApp seller. Payment (USDC on Base Sepolia) " +
-      "is handled automatically via x402 from the buyer's CDP wallet — no manual steps.",
+    "acquire-research",
+    "Acquire an existing deep-research report from a CacheApp seller. Only use this tool when " +
+      "the user explicitly wants to query deep research — not for general questions, quick facts, " +
+      "or topics you can answer directly. Note: this is a paid tool (USDC on Base Sepolia); payment " +
+      "is handled automatically via x402 from the buyer's wallet — no manual steps.",
     {},
     async () => {
       const result = await fetchWithPayment(`${RESOURCE_SERVER_URL}${ENDPOINT_PATH}`)

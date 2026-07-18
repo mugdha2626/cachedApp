@@ -57,8 +57,8 @@ async def register() -> dict:
         raise HTTPException(status_code=503, detail=str(err))
 
 
-@app.get("/research")
-async def research(request: Request) -> JSONResponse:
+@app.get("/acquire-research")
+async def acquire_research(request: Request) -> JSONResponse:
     """x402-gated test endpoint: pay $0.01 USDC to read the sample report."""
     resource_url = str(request.url)
     requirements = x402.payment_requirements(resource=resource_url, amount_atomic="10000")  # $0.01
