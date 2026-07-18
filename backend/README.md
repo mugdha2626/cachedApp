@@ -1,53 +1,46 @@
 # CacheApp backend
 
-The backend now has a dedicated **Data Core** HTTP contract for research
-ingestion, retrieval, paid-content redemption, feedback, and attribution. Its
-future implementation owns sessions, pages, matches, and payout splits; it
-does not execute payments or manage buyer wallets.
+The backend exposes a Data Core contract for research ingestion, search, paid-content redemption, feedback, and attribution. The initial implementation provides the local, preview-only `POST /query` search path; it never releases raw page text.
 
-The current routes are deliberate stubs and return `501 Not Implemented` until
-the Postgres/pgvector, object-storage, worker, and ranking implementations are
-wired. This lets the MCP/CLI and x402 workstreams integrate against stable
-request and response schemas without treating placeholder results as real
-research or settlement data.
+`POST /register` remains a separate seller-wallet integration for the existing CLI.
 
-`POST /register` remains a separate legacy seller-wallet integration for the
-existing CLI. It is not part of the Data Core.
+## Local search setup
 
-## Setup
+PostgreSQL must have the pgvector extension available. Configure the following values in `.env`:
 
 ```bash
 cp .env.example .env
-# fill in CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET
-# from https://portal.cdp.coinbase.com
+# Set DATABASE_URL and OPENAI_API_KEY
 ```
 
-## Run
+Run the API with uv:
 
 ```bash
 uv run --env-file .env uvicorn app.main:app --port 8000
 ```
 
+The app applies SQL migrations at startup when both `DATABASE_URL` and `OPENAI_API_KEY` are set. Seed two sample active sessions for a local trial:
+
+```bash
+uv run --env-file .env python -m app.seed
+```
+
+Then query the API:
+
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "content-type: application/json" \
+  -d '{"buyer_id":"00000000-0000-0000-0000-000000000001","query_text":"How do I add semantic search with pgvector?"}'
+```
+
+A successful response contains a confidence score, quoted price and transaction ID, plus only page IDs, summaries, and citations. If no prompt clears `SEARCH_MATCH_THRESHOLD`, it returns `{ "match": false }`.
+
 ## Data Core contract
 
-- `POST /ingest` — multipart form: `seller_id`, `original_prompt`, `file`, and
-  optional repeated `tags`. Returns `{ session_id }` once implemented.
-- `GET /sessions/{session_id}/status` — returns `{ session_id, status }`, where
-  status is `pending` or `active`.
-- `POST /query` — JSON `{ buyer_id, query_text }`; returns a match decision,
-  confidence, preview-only pages, price, and quoted transaction ID.
-- `POST /redeem` — JSON `{ transaction_id }`; releases paid full pages and
-  records attribution after the payment workstream confirms payment.
-- `POST /feedback` — JSON `{ transaction_id, page_id, rating, source }`.
-- `GET /attribution/{transaction_id}` — returns per-page seller payout splits.
-
-## Existing integration
-
-- `GET /` — hello world
-- `POST /register` — get-or-create the CDP seller wallet on Base Sepolia and
-  request testnet USDC from the faucet (best-effort). Returns
-  `{ name, address, network, faucet_tx }`. Responds 503 if CDP credentials
-  are missing.
+- `POST /ingest` — multipart form: `seller_id`, `original_prompt`, `file`, and optional repeated `tags`. Currently `501`.
+- `GET /sessions/{session_id}/status` — currently `501`.
+- `POST /query` — live when local search environment is configured.
+- `POST /redeem`, `POST /feedback`, and `GET /attribution/{transaction_id}` — currently `501`.
 
 ## Tests
 

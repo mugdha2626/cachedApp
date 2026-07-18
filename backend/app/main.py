@@ -1,11 +1,46 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 
 from app import x402
 from app.api.data_core import router as data_core_router
+from app.config import SearchSettings
+from app.db import apply_migrations, close_pool, create_pool
+from app.dependencies import set_data_core_service
+from app.embeddings import OpenAIEmbeddingProvider
+from app.repositories.data_core import PostgresSearchRepository
+from app.services.data_core import SearchDataCoreService, UnimplementedDataCoreService
 from app.wallet import MissingCredentialsError, create_seller_account
 
-app = FastAPI(title="CacheApp Data Core")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings = SearchSettings.from_env()
+    if settings is None:
+        yield
+        return
+
+    pool = await create_pool(settings.database_url)
+    await apply_migrations(pool)
+    set_data_core_service(
+        SearchDataCoreService(
+            repository=PostgresSearchRepository(pool),
+            embeddings=OpenAIEmbeddingProvider(
+                api_key=settings.openai_api_key, model=settings.embedding_model
+            ),
+            match_threshold=settings.match_threshold,
+            session_candidate_count=settings.session_candidate_count,
+            preview_count=settings.preview_count,
+        )
+    )
+    try:
+        yield
+    finally:
+        set_data_core_service(UnimplementedDataCoreService())
+        await close_pool(pool)
+
+
+app = FastAPI(title="CacheApp Data Core", lifespan=lifespan)
 app.include_router(data_core_router)
 
 
