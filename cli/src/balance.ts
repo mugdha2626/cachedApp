@@ -1,4 +1,19 @@
 import { BASE_SEPOLIA_RPC, BASE_SEPOLIA_USDC, loadWallet } from "./config"
+import {
+  openScreen,
+  withSpinner,
+  showError,
+  row,
+  blank,
+  hint,
+  theme,
+  t,
+  bold,
+  fg,
+  Text,
+  EXIT_KEYS,
+  type Screen,
+} from "./ui"
 
 async function fetchUsdcBalance(address: string): Promise<bigint> {
   // ERC-20 balanceOf(address) selector + 32-byte padded address
@@ -21,17 +36,56 @@ async function fetchUsdcBalance(address: string): Promise<bigint> {
   return BigInt(json.result ?? "0x0")
 }
 
-export async function balance() {
+/** Render the balance view into an existing screen. Returns false on failure. */
+export async function balanceView(screen: Screen, standalone: boolean): Promise<boolean> {
   const wallet = await loadWallet()
+
   if (!wallet) {
-    console.error("No seller wallet found. Run `bun index.ts register` first.")
-    process.exit(1)
+    await showError(
+      screen,
+      "USDC Balance",
+      standalone,
+      Text({ content: "No seller wallet found.", fg: theme.error }),
+      blank(),
+      Text({ content: t`Run ${fg(theme.accent)("register")} first.`, fg: theme.text }),
+    )
+    return false
   }
 
-  const atomic = await fetchUsdcBalance(wallet.address)
+  let atomic: bigint
+  try {
+    atomic = await withSpinner(screen, "USDC Balance", "Fetching balance on Base Sepolia…", fetchUsdcBalance(wallet.address))
+  } catch (err) {
+    await showError(
+      screen,
+      "USDC Balance",
+      standalone,
+      Text({ content: "Could not fetch balance.", fg: theme.error }),
+      blank(),
+      Text({ content: String(err instanceof Error ? err.message : err), fg: theme.muted }),
+    )
+    return false
+  }
+
   const usdc = (Number(atomic) / 1e6).toFixed(6)
 
-  console.log(`Seller wallet: ${wallet.address}`)
-  console.log(`Network:       Base Sepolia (${wallet.network})`)
-  console.log(`USDC balance:  ${usdc} USDC`)
+  screen.show(
+    { title: "USDC Balance", borderColor: theme.accent },
+    Text({ content: t`${bold(fg(theme.accent)(usdc))} ${fg(theme.muted)("USDC")}` }),
+    blank(),
+    row("Wallet", wallet.address),
+    row("Network", "Base Sepolia", fg(theme.muted)(`(${wallet.network})`)),
+    blank(),
+    hint(standalone ? "press q to exit" : "press any key to return to the menu"),
+  )
+
+  await screen.waitForKey(standalone ? EXIT_KEYS : undefined)
+  return true
+}
+
+export async function balance() {
+  const screen = await openScreen()
+  const ok = await balanceView(screen, true)
+  screen.close()
+  if (!ok) process.exit(1)
 }
