@@ -32,11 +32,10 @@ export async function registerView(screen: Screen, standalone: boolean): Promise
   const existing = await loadWallet()
   if (existing) {
     screen.show(
-      { title: "Seller Registration", borderColor: theme.warn },
-      Text({ content: t`${fg(theme.warn)("●")} ${bold(fg(theme.text)("Already registered as a seller"))}` }),
+      { title: "Become a Seller", borderColor: theme.warn },
+      Text({ content: t`${fg(theme.warn)("●")} ${bold(fg(theme.text)("You're already a seller"))}` }),
       blank(),
-      row("Address", existing.address),
-      row("Network", "Base Sepolia", fg(theme.muted)(`(${existing.network})`)),
+      row("Wallet", existing.address),
       blank(),
       exitHint,
     )
@@ -48,14 +47,14 @@ export async function registerView(screen: Screen, standalone: boolean): Promise
   try {
     res = await withSpinner(
       screen,
-      "Seller Registration",
-      `Registering via backend (${BACKEND_URL})…`,
+      "Become a Seller",
+      "Setting up your seller account…",
       fetch(`${BACKEND_URL}/register`, { method: "POST" }),
     )
   } catch {
     await showError(
       screen,
-      "Seller Registration",
+      "Become a Seller",
       standalone,
       Text({ content: t`Could not reach the backend at ${fg(theme.accent)(BACKEND_URL)}.`, fg: theme.error }),
       blank(),
@@ -71,9 +70,9 @@ export async function registerView(screen: Screen, standalone: boolean): Promise
       .catch(() => null)
     await showError(
       screen,
-      "Seller Registration",
+      "Become a Seller",
       standalone,
-      Text({ content: `Registration failed (${res.status})`, fg: theme.error }),
+      Text({ content: `Sign-up failed (${res.status})`, fg: theme.error }),
       blank(),
       Text({ content: String(detail ?? res.statusText), fg: theme.muted }),
     )
@@ -89,29 +88,23 @@ export async function registerView(screen: Screen, standalone: boolean): Promise
     createdAt: new Date().toISOString(),
   })
 
-  const faucetLines = wallet.faucet_tx
+  const fundingLines = wallet.faucet_tx
     ? [
-        row("Faucet tx", wallet.faucet_tx),
-        blank(),
         Text({
-          content: t`Check ${fg(theme.accent)("balance")} in a minute to see the USDC land.`,
+          content: t`Check ${fg(theme.accent)("Balance")} in a minute to see your starter funds land. ${fg(theme.success)("$$")}`,
           fg: theme.text,
         }),
       ]
-    : [
-        Text({ content: "Faucet request did not complete — fund the address at", fg: theme.warn }),
-        Text({ content: "https://portal.cdp.coinbase.com/products/faucet", fg: theme.accent }),
-      ]
+    : [Text({ content: "Starter funds didn't come through yet — check back later.", fg: theme.warn })]
 
   screen.show(
-    { title: "Seller Registration", borderColor: theme.success },
-    Text({ content: t`${fg(theme.success)("✓")} ${bold(fg(theme.text)("Seller registered"))}` }),
+    { title: "Become a Seller", borderColor: theme.success },
+    Text({ content: t`${fg(theme.success)("✓")} ${bold(fg(theme.text)("You're a seller — time to make some $$"))}` }),
     blank(),
-    row("Address", wallet.address),
-    row("Network", "Base Sepolia", fg(theme.muted)(`(${wallet.network})`)),
+    row("Wallet", wallet.address),
     row("Saved", WALLET_PATH),
     blank(),
-    ...faucetLines,
+    ...fundingLines,
     blank(),
     exitHint,
   )

@@ -12,9 +12,9 @@ async function showMenu(screen: Screen): Promise<MenuChoice> {
   const menu = Select({
     height: 6,
     options: [
-      { name: "Register", description: "create seller wallet (CDP)", value: "register" },
-      { name: "Balance", description: "show USDC balance", value: "balance" },
-      { name: "Quit", description: "exit the CLI", value: "quit" },
+      { name: "Become a Seller", description: "start making money on CacheApp", value: "register" },
+      { name: "Balance", description: "show your USD balance", value: "balance" },
+      { name: "Quit", description: "exit CacheApp", value: "quit" },
     ],
     backgroundColor: "transparent",
     focusedBackgroundColor: "transparent",
@@ -44,12 +44,12 @@ async function showMenu(screen: Screen): Promise<MenuChoice> {
     menu.focus()
 
     screen.show(
-      { title: "cachedApp", borderColor: theme.accent },
-      Text({ content: t`${bold(fg(theme.accent)("cachedApp CLI"))}` }),
+      { title: "CacheApp", borderColor: theme.success },
+      Text({ content: t`${bold(fg(theme.success)("$$ CacheApp $$"))} ${fg(theme.muted)("— make money from your deep research")}` }),
       blank(),
       wallet
-        ? row("Wallet", wallet.address, fg(theme.muted)("(Base Sepolia)"))
-        : Text({ content: t`${fg(theme.warn)("●")} ${fg(theme.text)("Not registered as a seller yet.")}` }),
+        ? row("Wallet", wallet.address)
+        : Text({ content: t`${fg(theme.warn)("●")} ${fg(theme.text)("You're not a seller yet.")}` }),
       blank(),
       menu,
       blank(),

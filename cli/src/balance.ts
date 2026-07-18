@@ -43,38 +43,37 @@ export async function balanceView(screen: Screen, standalone: boolean): Promise<
   if (!wallet) {
     await showError(
       screen,
-      "USDC Balance",
+      "Balance",
       standalone,
-      Text({ content: "No seller wallet found.", fg: theme.error }),
+      Text({ content: "You're not a seller yet.", fg: theme.error }),
       blank(),
-      Text({ content: t`Run ${fg(theme.accent)("register")} first.`, fg: theme.text }),
+      Text({ content: t`Choose ${fg(theme.accent)("Become a Seller")} first.`, fg: theme.text }),
     )
     return false
   }
 
   let atomic: bigint
   try {
-    atomic = await withSpinner(screen, "USDC Balance", "Fetching balance on Base Sepolia…", fetchUsdcBalance(wallet.address))
+    atomic = await withSpinner(screen, "Balance", "Fetching your balance…", fetchUsdcBalance(wallet.address))
   } catch (err) {
     await showError(
       screen,
-      "USDC Balance",
+      "Balance",
       standalone,
-      Text({ content: "Could not fetch balance.", fg: theme.error }),
+      Text({ content: "Could not fetch your balance.", fg: theme.error }),
       blank(),
       Text({ content: String(err instanceof Error ? err.message : err), fg: theme.muted }),
     )
     return false
   }
 
-  const usdc = (Number(atomic) / 1e6).toFixed(6)
+  const usd = (Number(atomic) / 1e6).toFixed(2)
 
   screen.show(
-    { title: "USDC Balance", borderColor: theme.accent },
-    Text({ content: t`${bold(fg(theme.accent)(usdc))} ${fg(theme.muted)("USDC")}` }),
+    { title: "Balance", borderColor: theme.success },
+    Text({ content: t`${bold(fg(theme.success)(`$${usd}`))} ${fg(theme.muted)("USD")}` }),
     blank(),
     row("Wallet", wallet.address),
-    row("Network", "Base Sepolia", fg(theme.muted)(`(${wallet.network})`)),
     blank(),
     hint(standalone ? "press q to exit" : "press any key to return to the menu"),
   )
