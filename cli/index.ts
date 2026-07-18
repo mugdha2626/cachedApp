@@ -11,6 +11,11 @@ switch (command) {
     await balance()
     break
   }
+  case "upload": {
+    const { upload } = await import("./src/upload")
+    await upload()
+    break
+  }
   case undefined: {
     const { home } = await import("./src/home")
     await home()
@@ -18,7 +23,7 @@ switch (command) {
   }
   default: {
     console.error(`Unknown command: ${command}`)
-    console.error("Usage: bun index.ts [register | balance]")
+    console.error("Usage: bun index.ts [register | balance | upload <path> [prompt]]")
     process.exit(1)
   }
 }

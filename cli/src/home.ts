@@ -2,17 +2,19 @@ import { Select, SelectRenderableEvents, type KeyEvent, type SelectOption } from
 import { balanceView } from "./balance"
 import { loadWallet } from "./config"
 import { registerView } from "./register"
+import { uploadView } from "./upload"
 import { openScreen, row, blank, hint, theme, t, bold, fg, Text, type Screen } from "./ui"
 
-type MenuChoice = "register" | "balance" | "quit"
+type MenuChoice = "register" | "upload" | "balance" | "quit"
 
 async function showMenu(screen: Screen): Promise<MenuChoice> {
   const wallet = await loadWallet()
 
   const menu = Select({
-    height: 6,
+    height: 8,
     options: [
       { name: "Become a Seller", description: "start making money on CacheApp", value: "register" },
+      { name: "Upload Research", description: "sell a deep-research .pdf/.txt/.md", value: "upload" },
       { name: "Balance", description: "show your USD balance", value: "balance" },
       { name: "Quit", description: "exit CacheApp", value: "quit" },
     ],
@@ -66,6 +68,7 @@ export async function home() {
     const choice = await showMenu(screen)
     if (choice === "quit") break
     if (choice === "register") await registerView(screen, false)
+    else if (choice === "upload") await uploadView(screen, false)
     else await balanceView(screen, false)
   }
 
