@@ -8,23 +8,20 @@ To install dependencies:
 bun install
 ```
 
-Set up CDP credentials (needed for `register`):
-
-```bash
-cp .env.example .env
-# then fill in CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET
-# from https://portal.cdp.coinbase.com
-```
+The CLI holds no CDP credentials — registration goes through the backend
+(`../backend`), which must be running for `register`. Optionally set
+`BACKEND_URL` in `.env` (defaults to `http://localhost:8000`).
 
 Commands:
 
 ```bash
 bun run index.ts           # TUI: show seller status
-bun run index.ts register  # create a CDP seller wallet (Base Sepolia) + faucet USDC
-bun run index.ts balance   # show the wallet's USDC balance
+bun run index.ts register  # register seller via backend, store wallet address
+bun run index.ts balance   # show the wallet's USDC balance (Base Sepolia)
 ```
 
-`register` saves the wallet address to `cli/wallet.json` (gitignored). The wallet
-itself is managed by CDP — no private keys are stored locally.
+`register` saves the wallet address to `cli/wallet.json` (gitignored). The
+wallet itself is managed by CDP on the backend — the CLI only stores the
+address. `balance` queries the public Base Sepolia RPC directly.
 
 This project was created using `bun init` in bun v1.1.33. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
