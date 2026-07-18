@@ -2,6 +2,7 @@ import { homedir } from "os"
 import { extname, basename } from "path"
 import { InputRenderable, type KeyEvent } from "@opentui/core"
 import { loadWallet } from "./config"
+import { sellerIdFor } from "./uuid"
 import {
   openScreen,
   withSpinner,
@@ -210,7 +211,7 @@ export async function uploadView(
       screen,
       "Upload Research",
       `Uploading ${file.name}…`,
-      ingest(file, prompt, wallet.address),
+      ingest(file, prompt, sellerIdFor(wallet.address)),
     )
   } catch (err) {
     await showError(
