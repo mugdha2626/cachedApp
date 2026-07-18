@@ -1,4 +1,19 @@
 import { loadWallet, saveWallet, WALLET_PATH } from "./config"
+import {
+  openScreen,
+  withSpinner,
+  showError,
+  row,
+  blank,
+  hint,
+  theme,
+  t,
+  bold,
+  fg,
+  Text,
+  EXIT_KEYS,
+  type Screen,
+} from "./ui"
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://localhost:8000"
 
@@ -9,24 +24,43 @@ interface RegisterResponse {
   faucet_tx: string | null
 }
 
-export async function register() {
+/** Render the registration view into an existing screen. Returns false on failure. */
+export async function registerView(screen: Screen, standalone: boolean): Promise<boolean> {
+  const exitHint = hint(standalone ? "press q to exit" : "press any key to return to the menu")
+  const exitKeys = standalone ? EXIT_KEYS : undefined
+
   const existing = await loadWallet()
   if (existing) {
-    console.log("Already registered as a seller.")
-    console.log(`  Address: ${existing.address}`)
-    console.log(`  Network: ${existing.network}`)
-    return
+    screen.show(
+      { title: "Become a Seller", borderColor: theme.warn },
+      Text({ content: t`${fg(theme.warn)("●")} ${bold(fg(theme.text)("You're already a seller"))}` }),
+      blank(),
+      row("Wallet", existing.address),
+      blank(),
+      exitHint,
+    )
+    await screen.waitForKey(exitKeys)
+    return true
   }
-
-  console.log(`Registering seller via backend (${BACKEND_URL})…`)
 
   let res: Response
   try {
-    res = await fetch(`${BACKEND_URL}/register`, { method: "POST" })
+    res = await withSpinner(
+      screen,
+      "Become a Seller",
+      "Setting up your seller account…",
+      fetch(`${BACKEND_URL}/register`, { method: "POST" }),
+    )
   } catch {
-    console.error(`Could not reach the backend at ${BACKEND_URL}.`)
-    console.error("Start it with: cd backend && uv run uvicorn app.main:app")
-    process.exit(1)
+    await showError(
+      screen,
+      "Become a Seller",
+      standalone,
+      Text({ content: t`Could not reach the backend at ${fg(theme.accent)(BACKEND_URL)}.`, fg: theme.error }),
+      blank(),
+      Text({ content: t`Start it with: ${fg(theme.accent)("cd backend && uv run uvicorn app.main:app")}`, fg: theme.text }),
+    )
+    return false
   }
 
   if (!res.ok) {
@@ -34,8 +68,15 @@ export async function register() {
       .json()
       .then((body: any) => body?.detail)
       .catch(() => null)
-    console.error(`Registration failed (${res.status}): ${detail ?? res.statusText}`)
-    process.exit(1)
+    await showError(
+      screen,
+      "Become a Seller",
+      standalone,
+      Text({ content: `Sign-up failed (${res.status})`, fg: theme.error }),
+      blank(),
+      Text({ content: String(detail ?? res.statusText), fg: theme.muted }),
+    )
+    return false
   }
 
   const wallet = (await res.json()) as RegisterResponse
@@ -47,16 +88,34 @@ export async function register() {
     createdAt: new Date().toISOString(),
   })
 
-  console.log("\nSeller registered!")
-  console.log(`  Address: ${wallet.address}`)
-  console.log(`  Network: Base Sepolia (${wallet.network})`)
-  console.log(`  Saved:   ${WALLET_PATH}`)
+  const fundingLines = wallet.faucet_tx
+    ? [
+        Text({
+          content: t`Check ${fg(theme.accent)("Balance")} in a minute to see your starter funds land. ${fg(theme.success)("$$")}`,
+          fg: theme.text,
+        }),
+      ]
+    : [Text({ content: "Starter funds didn't come through yet — check back later.", fg: theme.warn })]
 
-  if (wallet.faucet_tx) {
-    console.log(`  Faucet tx: ${wallet.faucet_tx}`)
-    console.log("  Run `bun index.ts balance` in a minute to see the USDC land.")
-  } else {
-    console.log("  Faucet request did not complete — fund the address at")
-    console.log("  https://portal.cdp.coinbase.com/products/faucet if needed.")
-  }
+  screen.show(
+    { title: "Become a Seller", borderColor: theme.success },
+    Text({ content: t`${fg(theme.success)("✓")} ${bold(fg(theme.text)("You're a seller — time to make some $$"))}` }),
+    blank(),
+    row("Wallet", wallet.address),
+    row("Saved", WALLET_PATH),
+    blank(),
+    ...fundingLines,
+    blank(),
+    exitHint,
+  )
+
+  await screen.waitForKey(exitKeys)
+  return true
+}
+
+export async function register() {
+  const screen = await openScreen()
+  const ok = await registerView(screen, true)
+  screen.close()
+  if (!ok) process.exit(1)
 }
