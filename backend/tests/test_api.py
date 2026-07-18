@@ -5,6 +5,7 @@ or require real credentials.
 """
 
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -120,3 +121,47 @@ class TestRegister:
         assert "CDP_API_KEY_ID" not in detail
         assert "CDP_API_KEY_SECRET" in detail
         assert "CDP_WALLET_SECRET" in detail
+
+
+class TestDataCoreContract:
+    def test_data_core_routes_are_registered(self, client):
+        paths = client.get("/openapi.json").json()["paths"]
+
+        assert "/ingest" in paths
+        assert "/sessions/{session_id}/status" in paths
+        assert "/query" in paths
+        assert "/redeem" in paths
+        assert "/feedback" in paths
+        assert "/attribution/{transaction_id}" in paths
+
+    def test_data_core_stubs_return_501(self, client):
+        seller_id = str(uuid4())
+        buyer_id = str(uuid4())
+        session_id = str(uuid4())
+        page_id = str(uuid4())
+        transaction_id = str(uuid4())
+
+        responses = [
+            client.post(
+                "/ingest",
+                data={"seller_id": seller_id, "original_prompt": "Research a topic"},
+                files={"file": ("report.md", b"# Report", "text/markdown")},
+            ),
+            client.get(f"/sessions/{session_id}/status"),
+            client.post("/query", json={"buyer_id": buyer_id, "query_text": "topic"}),
+            client.post("/redeem", json={"transaction_id": transaction_id}),
+            client.post(
+                "/feedback",
+                json={
+                    "transaction_id": transaction_id,
+                    "page_id": page_id,
+                    "rating": 1,
+                    "source": "explicit",
+                },
+            ),
+            client.get(f"/attribution/{transaction_id}"),
+        ]
+
+        for response in responses:
+            assert response.status_code == 501
+            assert "not implemented yet" in response.json()["detail"]

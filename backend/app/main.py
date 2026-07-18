@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
 
+from app.api.data_core import router as data_core_router
 from app.wallet import MissingCredentialsError, create_seller_account
 
-app = FastAPI(title="cachedApp backend")
+app = FastAPI(title="CacheApp Data Core")
+app.include_router(data_core_router)
 
 
 @app.get("/")
