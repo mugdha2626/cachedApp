@@ -5,8 +5,10 @@
  * wallet (no raw private keys), and retry with the payment attached — the
  * seller's address in the requirements receives the USDC.
  */
+import { createServer } from "node:http"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js"
 import { CdpClient } from "@coinbase/cdp-sdk"
 
 const RESOURCE_SERVER_URL = process.env.RESOURCE_SERVER_URL ?? "http://localhost:8000"
@@ -53,28 +55,54 @@ async function fetchWithPayment(url: string): Promise<PaidResponse> {
   }
 }
 
-const server = new McpServer({
-  name: "CacheApp",
-  version: "0.1.0",
-})
+function buildServer(): McpServer {
+  const server = new McpServer({
+    name: "CacheApp",
+    version: "0.1.0",
+  })
 
-server.tool(
-  "fetch-research",
-  "Buy a deep-research report from a CacheApp seller. Payment (USDC on Base Sepolia) " +
-    "is handled automatically via x402 from the buyer's CDP wallet — no manual steps.",
-  {},
-  async () => {
-    const result = await fetchWithPayment(`${RESOURCE_SERVER_URL}${ENDPOINT_PATH}`)
-    if (result.status !== 200) {
-      return {
-        isError: true,
-        content: [{ type: "text", text: `Purchase failed (HTTP ${result.status}): ${JSON.stringify(result.body)}` }],
+  server.tool(
+    "fetch-research",
+    "Buy a deep-research report from a CacheApp seller. Payment (USDC on Base Sepolia) " +
+      "is handled automatically via x402 from the buyer's CDP wallet — no manual steps.",
+    {},
+    async () => {
+      const result = await fetchWithPayment(`${RESOURCE_SERVER_URL}${ENDPOINT_PATH}`)
+      if (result.status !== 200) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Purchase failed (HTTP ${result.status}): ${JSON.stringify(result.body)}` }],
+        }
       }
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify({ ...(result.body as object), settlement: result.settlement }) }],
-    }
-  },
-)
+      return {
+        content: [{ type: "text", text: JSON.stringify({ ...(result.body as object), settlement: result.settlement }) }],
+      }
+    },
+  )
 
-await server.connect(new StdioServerTransport())
+  return server
+}
+
+if (process.env.MCP_TRANSPORT === "http") {
+  // Remote mode for clients that only support Streamable HTTP connectors
+  // (e.g. ChatGPT). Stateless: fresh server + transport per request.
+  const port = Number(process.env.PORT ?? 3000)
+  createServer(async (req, res) => {
+    if (req.method !== "POST") {
+      res.writeHead(405, { Allow: "POST" }).end()
+      return
+    }
+    const chunks: Buffer[] = []
+    for await (const chunk of req) chunks.push(chunk as Buffer)
+    const body = JSON.parse(Buffer.concat(chunks).toString() || "{}")
+
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+    res.on("close", () => transport.close())
+    await buildServer().connect(transport)
+    await transport.handleRequest(req, res, body)
+  }).listen(port, () => {
+    console.error(`CacheApp MCP server listening on http://localhost:${port}/mcp`)
+  })
+} else {
+  await buildServer().connect(new StdioServerTransport())
+}

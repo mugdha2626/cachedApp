@@ -1,8 +1,9 @@
-"""Server side of the x402 payment protocol ("exact" scheme, Base Sepolia).
+"""Server side of the x402 v2 payment protocol ("exact" scheme, Base Sepolia).
 
-A gated endpoint answers 402 with payment requirements until the client
-retries with an X-PAYMENT header, which we verify and settle through an
-x402 facilitator. The protocol shapes are small, so they live here
+A gated endpoint answers 402 with payment requirements (PAYMENT-REQUIRED
+header + JSON body) until the client retries with a PAYMENT-SIGNATURE
+header (v1 X-PAYMENT is also accepted), which we verify and settle through
+an x402 facilitator. The protocol shapes are small, so they live here
 explicitly rather than behind an SDK.
 """
 
@@ -14,9 +15,9 @@ from typing import Any
 
 import httpx
 
-X402_VERSION = 1
+X402_VERSION = 2
 SCHEME = "exact"
-NETWORK = "base-sepolia"
+NETWORK = "eip155:84532"  # Base Sepolia (CAIP-2, required by x402 v2)
 USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 FACILITATOR_URL = os.environ.get("X402_FACILITATOR_URL", "https://x402.org/facilitator")
 
@@ -34,33 +35,46 @@ def get_payment_address(resource: str) -> str:
     return SELLER_ADDRESS
 
 
-def payment_requirements(resource: str, description: str, amount_atomic: str) -> dict:
-    """Build the PaymentRequirements object advertised in a 402 response.
+def payment_requirements(resource: str, amount_atomic: str) -> dict:
+    """Build one v2 PaymentRequirements entry.
 
     `amount_atomic` is in USDC atomic units (6 decimals): "10000" = $0.01.
+    `extra` carries the EIP-712 domain of the asset for EIP-3009 signing.
     """
     return {
         "scheme": SCHEME,
         "network": NETWORK,
-        "maxAmountRequired": amount_atomic,
-        "resource": resource,
-        "description": description,
-        "mimeType": "application/json",
-        "outputSchema": {},
+        "amount": amount_atomic,
+        "asset": USDC_ADDRESS,
         "payTo": get_payment_address(resource),
         "maxTimeoutSeconds": 60,
-        "asset": USDC_ADDRESS,
         "extra": {"name": "USDC", "version": "2"},
     }
 
 
-def payment_required(requirements: dict, error: str = "X-PAYMENT header is required") -> dict:
-    """Body of a 402 response."""
-    return {"x402Version": X402_VERSION, "error": error, "accepts": [requirements]}
+def payment_required(resource_url: str, description: str, requirements: dict, error: str | None = None) -> dict:
+    """Body of a 402 response (v2 PaymentRequired)."""
+    body: dict[str, Any] = {
+        "x402Version": X402_VERSION,
+        "resource": {
+            "url": resource_url,
+            "description": description,
+            "mimeType": "application/json",
+        },
+        "accepts": [requirements],
+    }
+    if error is not None:
+        body["error"] = error
+    return body
+
+
+def encode_header(payload: dict) -> str:
+    """Base64-encode a protocol object for an HTTP header."""
+    return base64.b64encode(json.dumps(payload).encode()).decode()
 
 
 def decode_payment(header: str) -> dict:
-    """Decode a client's X-PAYMENT header (base64-encoded JSON payload)."""
+    """Decode a client's payment header (base64-encoded JSON payload)."""
     try:
         payload = json.loads(base64.b64decode(header, validate=True))
     except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as err:
@@ -70,17 +84,12 @@ def decode_payment(header: str) -> dict:
     return payload
 
 
-def encode_settlement(settlement: dict) -> str:
-    """Encode a settlement result for the X-PAYMENT-RESPONSE header."""
-    return base64.b64encode(json.dumps(settlement).encode()).decode()
-
-
 async def _facilitator_post(path: str, payment: dict, requirements: dict) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             f"{FACILITATOR_URL}{path}",
             json={
-                "x402Version": X402_VERSION,
+                "x402Version": payment.get("x402Version", X402_VERSION),
                 "paymentPayload": payment,
                 "paymentRequirements": requirements,
             },

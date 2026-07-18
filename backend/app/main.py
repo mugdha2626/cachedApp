@@ -60,38 +60,38 @@ async def register() -> dict:
 @app.get("/research")
 async def research(request: Request) -> JSONResponse:
     """x402-gated test endpoint: pay $0.01 USDC to read the sample report."""
-    requirements = x402.payment_requirements(
-        resource=str(request.url),
-        description="CacheApp deep-research sample report",
-        amount_atomic="10000",  # $0.01
-    )
+    resource_url = str(request.url)
+    requirements = x402.payment_requirements(resource=resource_url, amount_atomic="10000")  # $0.01
 
-    header = request.headers.get("X-PAYMENT")
+    def rejected(error: str | None = None) -> JSONResponse:
+        body = x402.payment_required(
+            resource_url, "CacheApp deep-research sample report", requirements, error=error
+        )
+        return JSONResponse(status_code=402, content=body, headers={"PAYMENT-REQUIRED": x402.encode_header(body)})
+
+    # v2 clients send PAYMENT-SIGNATURE; v1 clients send X-PAYMENT.
+    header = request.headers.get("PAYMENT-SIGNATURE") or request.headers.get("X-PAYMENT")
     if not header:
-        return JSONResponse(status_code=402, content=x402.payment_required(requirements))
+        return rejected()
 
     try:
         payment = x402.decode_payment(header)
     except ValueError as err:
-        return JSONResponse(
-            status_code=402,
-            content=x402.payment_required(requirements, error=f"Invalid X-PAYMENT header: {err}"),
-        )
+        return rejected(error=f"Invalid payment header: {err}")
 
     verification = await x402.verify_payment(payment, requirements)
     if not verification.get("isValid"):
-        error = verification.get("invalidReason") or "Payment verification failed"
-        return JSONResponse(status_code=402, content=x402.payment_required(requirements, error=error))
+        return rejected(error=verification.get("invalidReason") or "Payment verification failed")
 
     settlement = await x402.settle_payment(payment, requirements)
     if not settlement.get("success"):
-        error = settlement.get("errorReason") or "Payment settlement failed"
-        return JSONResponse(status_code=402, content=x402.payment_required(requirements, error=error))
+        return rejected(error=settlement.get("errorReason") or "Payment settlement failed")
 
+    receipt = x402.encode_header(settlement)
     return JSONResponse(
         content={
             "report": "Sample deep-research report: paid content unlocked.",
             "payer": verification.get("payer"),
         },
-        headers={"X-PAYMENT-RESPONSE": x402.encode_settlement(settlement)},
+        headers={"PAYMENT-RESPONSE": receipt, "X-PAYMENT-RESPONSE": receipt},
     )
