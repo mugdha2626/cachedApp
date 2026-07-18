@@ -10,7 +10,7 @@ today over Postgres/pgvector:
   returns `202`; poll the status endpoint until `active`.
 - **Search** (`POST /query`): preview-only cosine ranking over active sessions
   and their pages. Returns a confidence, a quoted price + transaction ID, and
-  page previews (id, summary, citation) — never raw page text.
+  page previews (id, summary, citation), never raw page text.
 ## Ingestion
 
 ```mermaid
