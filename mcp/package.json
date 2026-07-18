@@ -1,0 +1,20 @@
+{
+  "name": "cacheapp-mcp",
+  "version": "0.1.0",
+  "description": "CacheApp MCP server: buy deep-research over x402 with a CDP-managed wallet",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "dev": "bun index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.53.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@x402/core": "^2.19.0",
+    "@x402/evm": "^2.19.0"
+  }
+}
