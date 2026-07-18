@@ -4,10 +4,10 @@ import asyncio
 from decimal import Decimal
 from uuid import UUID, uuid5
 
-from app.config import SearchSettings
+from app.config import Settings
 from app.db import apply_migrations, close_pool, create_pool
-from app.embeddings import OpenAIEmbeddingProvider
 from app.repositories.data_core import _vector_literal
+from app.services.ai import OpenAIClient
 
 
 NAMESPACE = UUID("7c70390a-1c8d-4c41-9ced-0c344798b024")
@@ -29,35 +29,35 @@ SAMPLES = [
 
 
 async def seed() -> None:
-    settings = SearchSettings.from_env()
+    settings = Settings.from_env()
     if settings is None:
         raise RuntimeError("DATABASE_URL and OPENAI_API_KEY are required to seed search data.")
 
     pool = await create_pool(settings.database_url)
-    embeddings = OpenAIEmbeddingProvider(settings.openai_api_key, settings.embedding_model)
+    client = OpenAIClient(settings)
     try:
         await apply_migrations(pool)
         for prompt, heading, summary, citation in SAMPLES:
             session_id = uuid5(NAMESPACE, prompt)
             page_id = uuid5(NAMESPACE, summary)
-            prompt_embedding = await embeddings.embed(prompt)
-            summary_embedding = await embeddings.embed(summary)
+            session_embedding = (await client.embed([prompt]))[0]
+            summary_embedding = (await client.embed([summary]))[0]
             await pool.execute(
                 """
                 INSERT INTO sessions (
-                    session_id, seller_id, original_prompt, prompt_embedding,
+                    session_id, seller_id, original_prompt, session_embedding,
                     embedding_model_version, status, price_base
                 ) VALUES ($1, $2, $3, $4::vector, $5, 'active', $6)
                 ON CONFLICT (session_id) DO UPDATE SET
                     original_prompt = EXCLUDED.original_prompt,
-                    prompt_embedding = EXCLUDED.prompt_embedding,
+                    session_embedding = EXCLUDED.session_embedding,
                     embedding_model_version = EXCLUDED.embedding_model_version,
                     status = 'active'
                 """,
                 session_id,
                 SELLER_ID,
                 prompt,
-                _vector_literal(prompt_embedding),
+                _vector_literal(session_embedding),
                 settings.embedding_model,
                 Decimal("0.05"),
             )

@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cacheapp
+    ports:
+      - "5432:5432"
+    volumes:
+      - cache_pgdata:/var/lib/postgresql/data
+    # Schema is applied by the app at startup (app/db.py -> migrations/), so the
+    # container only needs the pgvector-enabled Postgres image.
+
+volumes:
+  cache_pgdata:

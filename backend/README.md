@@ -1,46 +1,68 @@
 # CacheApp backend
 
-The backend exposes a Data Core contract for research ingestion, search, paid-content redemption, feedback, and attribution. The initial implementation provides the local, preview-only `POST /query` search path; it never releases raw page text.
+The backend exposes a **Data Core** contract for research ingestion, search,
+paid-content redemption, feedback, and attribution. Two paths are implemented
+today over Postgres/pgvector:
 
-`POST /register` remains a separate seller-wallet integration for the existing CLI.
+- **Ingestion** (`POST /ingest`, `GET /sessions/{id}/status`): upload →
+  parse/normalize → split into pages (markdown headers, token-window fallback) →
+  summarise each page (`gpt-4o-mini`) → rate freshness → embed
+  (`text-embedding-3-small`; page = its summary, session = prompt + summaries) →
+  persist → `status = active`. The pipeline runs in-process after the upload
+  returns `202`; poll the status endpoint until `active`.
+- **Search** (`POST /query`): preview-only cosine ranking over active sessions
+  and their pages. Returns a confidence, a quoted price + transaction ID, and
+  page previews (id, summary, citation) — never raw page text.
 
-## Local search setup
+`POST /redeem`, `POST /feedback`, and `GET /attribution/{id}` are still `501`.
+`POST /register` is a separate seller-wallet integration; `GET /research` is an
+x402-gated demo endpoint.
 
-PostgreSQL must have the pgvector extension available. Configure the following values in `.env`:
+## Setup
 
 ```bash
 cp .env.example .env
-# Set DATABASE_URL and OPENAI_API_KEY
+# Set OPENAI_API_KEY (summaries + embeddings). DATABASE_URL defaults to the
+# docker-compose Postgres below. CDP_* are only needed for /register.
 ```
 
-Run the API with uv:
+Start Postgres/pgvector:
 
 ```bash
+docker compose up -d
+```
+
+The app applies the SQL migrations in `migrations/` at startup whenever both
+`DATABASE_URL` and `OPENAI_API_KEY` are set (otherwise it boots in a stubbed,
+DB-free mode where the Data Core endpoints return `501`).
+
+## Run
+
+```bash
+uv sync
 uv run --env-file .env uvicorn app.main:app --port 8000
 ```
 
-The app applies SQL migrations at startup when both `DATABASE_URL` and `OPENAI_API_KEY` are set. Seed two sample active sessions for a local trial:
+## Ingest a document, then query it
+
+```bash
+curl -sX POST localhost:8000/ingest \
+  -F seller_id=$(uuidgen) -F original_prompt="Research topic X" \
+  -F "file=@sample.md;type=text/markdown"
+# -> {"session_id": "..."}
+
+curl -s localhost:8000/sessions/<session_id>/status   # "pending" -> "active"
+
+curl -sX POST localhost:8000/query \
+  -H "content-type: application/json" \
+  -d '{"buyer_id":"00000000-0000-0000-0000-000000000001","query_text":"topic X"}'
+```
+
+Or seed two sample active sessions for a quick search trial:
 
 ```bash
 uv run --env-file .env python -m app.seed
 ```
-
-Then query the API:
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "content-type: application/json" \
-  -d '{"buyer_id":"00000000-0000-0000-0000-000000000001","query_text":"How do I add semantic search with pgvector?"}'
-```
-
-A successful response contains a confidence score, quoted price and transaction ID, plus only page IDs, summaries, and citations. If no prompt clears `SEARCH_MATCH_THRESHOLD`, it returns `{ "match": false }`.
-
-## Data Core contract
-
-- `POST /ingest` — multipart form: `seller_id`, `original_prompt`, `file`, and optional repeated `tags`. Currently `501`.
-- `GET /sessions/{session_id}/status` — currently `501`.
-- `POST /query` — live when local search environment is configured.
-- `POST /redeem`, `POST /feedback`, and `GET /attribution/{transaction_id}` — currently `501`.
 
 ## Tests
 

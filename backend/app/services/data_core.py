@@ -1,11 +1,18 @@
-"""Data Core service boundary and preview-only local search implementation."""
+"""Data Core service boundary and the Postgres-backed implementation.
 
+`PostgresDataCoreService` implements the ingestion write path (upload -> pipeline
+-> Postgres/pgvector) and the preview-only search read path (`POST /query`).
+Redeem, feedback, and attribution remain deferred and surface as `501`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
-from app.embeddings import EmbeddingProvider
-from app.repositories.data_core import SearchRepository
 from app.schemas import (
     AttributionResponse,
     FeedbackRequest,
@@ -17,10 +24,28 @@ from app.schemas import (
     RedeemResponse,
     SessionStatusResponse,
 )
+from app.services.ingestion import rate_freshness, split_into_pages
+
+if TYPE_CHECKING:
+    from app.config import Settings
+    from app.repositories.data_core import DataCoreRepository, SearchRepository
+    from app.services.ai import OpenAIClient
+
+logger = logging.getLogger(__name__)
+
+_SUPPORTED_CONTENT_TYPES = {"text/markdown", "text/x-markdown", "text/plain"}
 
 
 class DataCoreNotImplementedError(RuntimeError):
     """Raised until a Data Core operation has a production implementation."""
+
+
+class UnsupportedContentTypeError(ValueError):
+    """Raised when an upload is not a supported text format."""
+
+
+class SessionNotFoundError(LookupError):
+    """Raised when a session id does not exist."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +56,18 @@ class IngestCommand:
     file_name: str
     content_type: str | None
     content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class PageRecord:
+    """A fully processed page ready to be persisted."""
+
+    order_index: int
+    raw_text: str
+    summary_text: str
+    summary_embedding: list[float]
+    freshness: float
+    relevance_ranking: float = 0.5
 
 
 class DataCoreService(Protocol):
@@ -76,40 +113,104 @@ class UnimplementedDataCoreService:
         )
 
 
-class SearchDataCoreService(UnimplementedDataCoreService):
-    """Implements the preview-only query path; all other Data Core work is deferred."""
+def _is_supported(content_type: str | None) -> bool:
+    if content_type is None:
+        return True  # unspecified defaults to text; decoding is lenient
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type in _SUPPORTED_CONTENT_TYPES or media_type.startswith("text/")
+
+
+class PostgresDataCoreService(UnimplementedDataCoreService):
+    """Ingestion (write) + preview-only search (read) over Postgres/pgvector.
+
+    Redeem, feedback, and attribution are inherited from the stub base and still
+    surface as `501` through the API layer.
+    """
 
     def __init__(
         self,
-        repository: SearchRepository,
-        embeddings: EmbeddingProvider,
-        match_threshold: float,
-        session_candidate_count: int,
-        preview_count: int,
+        repository: DataCoreRepository,
+        search_repository: SearchRepository,
+        ai: OpenAIClient,
+        settings: Settings,
     ) -> None:
-        self._repository = repository
-        self._embeddings = embeddings
-        self._match_threshold = match_threshold
-        self._session_candidate_count = session_candidate_count
-        self._preview_count = preview_count
+        self._repo = repository
+        self._search = search_repository
+        self._ai = ai
+        self._settings = settings
+
+    # --- Ingestion -------------------------------------------------------
+
+    async def ingest(self, command: IngestCommand) -> IngestResponse:
+        if not _is_supported(command.content_type):
+            raise UnsupportedContentTypeError(
+                f"Unsupported content type '{command.content_type}'. "
+                "Upload markdown or plain text."
+            )
+        text = command.content.decode("utf-8", errors="replace")
+        session_id = await self._repo.create_pending_session(command)
+        # Fire-and-forget: single-process MVP. A failed pipeline logs and leaves
+        # the session 'pending'; a durable queue replaces this later.
+        asyncio.create_task(self._run_pipeline(session_id, command.original_prompt, text))
+        return IngestResponse(session_id=session_id)
+
+    async def _run_pipeline(self, session_id: UUID, original_prompt: str, text: str) -> None:
+        try:
+            drafts = split_into_pages(text, self._settings.max_page_tokens)
+            if not drafts:
+                logger.warning("session %s produced no pages; left pending", session_id)
+                return
+
+            summaries = await self._ai.summarize_pages([d.raw_text for d in drafts])
+
+            # One batched embedding call: every page summary plus the session
+            # composite (prompt + all summaries), which anchors session search.
+            session_text = original_prompt + "\n\n" + "\n".join(summaries)
+            vectors = await self._ai.embed([*summaries, session_text])
+            page_vectors, session_vector = vectors[:-1], vectors[-1]
+
+            pages = [
+                PageRecord(
+                    order_index=draft.order_index,
+                    raw_text=draft.raw_text,
+                    summary_text=summary,
+                    summary_embedding=vector,
+                    freshness=rate_freshness(draft.raw_text),
+                )
+                for draft, summary, vector in zip(drafts, summaries, page_vectors)
+            ]
+            await self._repo.complete_ingestion(
+                session_id, session_vector, self._settings.embedding_model, pages
+            )
+            logger.info("session %s active with %d pages", session_id, len(pages))
+        except Exception:
+            logger.exception("ingestion pipeline failed for session %s", session_id)
+
+    async def get_session_status(self, session_id: UUID) -> SessionStatusResponse:
+        result = await self._repo.get_session_status(session_id)
+        if result is None:
+            raise SessionNotFoundError(f"Session {session_id} not found.")
+        return result
+
+    # --- Search ----------------------------------------------------------
 
     async def query(self, request: QueryRequest) -> QueryResponse:
-        query_embedding = await self._embeddings.embed(request.query_text)
-        candidates = await self._repository.find_session_candidates(
-            query_embedding, self._session_candidate_count
+        query_embedding = (await self._ai.embed([request.query_text]))[0]
+        candidates = await self._search.find_session_candidates(
+            query_embedding, self._settings.session_candidate_count
         )
         if not candidates:
             return QueryResponse(match=False, confidence=0)
 
         match = candidates[0]
         confidence = max(0.0, min(1.0, match.similarity))
-        if confidence < self._match_threshold:
+        if confidence < self._settings.match_threshold:
             return QueryResponse(match=False, confidence=confidence)
 
-        pages = await self._repository.find_page_candidates(
-            match.session_id, query_embedding, self._preview_count
+        pages = await self._search.find_page_candidates(
+            match.session_id, query_embedding, self._settings.preview_count
         )
-        transaction_id = await self._repository.create_quote(
+        transaction_id = await self._search.create_quote(
             request.buyer_id, match.session_id, request.query_text, match.price
         )
         return QueryResponse(

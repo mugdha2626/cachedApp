@@ -1,4 +1,9 @@
-"""Postgres repository contracts and adapter for the local search path."""
+"""Postgres repository contracts and adapters.
+
+Two adapters share one pool: `PostgresDataCoreRepository` (ingestion write path)
+and `PostgresSearchRepository` (preview-only search read path). Vectors are sent
+as text literals cast to `::vector`, so no pgvector codec registration is needed.
+"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,14 +13,22 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from app.schemas import AttributionResponse, SessionStatusResponse
+from app.schemas import AttributionResponse, SessionStatus, SessionStatusResponse
 
 if TYPE_CHECKING:
-    from app.services.data_core import IngestCommand
+    from app.services.data_core import IngestCommand, PageRecord
 
 
 class DataCoreRepository(Protocol):
     async def create_pending_session(self, command: "IngestCommand") -> UUID: ...
+
+    async def complete_ingestion(
+        self,
+        session_id: UUID,
+        session_embedding: Sequence[float],
+        embedding_model_version: str,
+        pages: "list[PageRecord]",
+    ) -> None: ...
 
     async def get_session_status(self, session_id: UUID) -> SessionStatusResponse | None: ...
 
@@ -56,7 +69,80 @@ def _vector_literal(values: Sequence[float]) -> str:
     return "[" + ",".join(str(float(value)) for value in values) + "]"
 
 
+class PostgresDataCoreRepository:
+    """Ingestion write path: create a pending session, then activate it."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def create_pending_session(self, command: "IngestCommand") -> UUID:
+        return await self._pool.fetchval(
+            """
+            INSERT INTO sessions (seller_id, original_prompt, category_tags)
+            VALUES ($1, $2, $3)
+            RETURNING session_id
+            """,
+            command.seller_id,
+            command.original_prompt,
+            command.tags,
+        )
+
+    async def complete_ingestion(
+        self,
+        session_id: UUID,
+        session_embedding: Sequence[float],
+        embedding_model_version: str,
+        pages: "list[PageRecord]",
+    ) -> None:
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """
+                UPDATE sessions
+                SET session_embedding = $1::vector,
+                    embedding_model_version = $2,
+                    status = 'active'
+                WHERE session_id = $3
+                """,
+                _vector_literal(session_embedding),
+                embedding_model_version,
+                session_id,
+            )
+            await conn.executemany(
+                """
+                INSERT INTO pages (
+                    session_id, order_index, raw_text, summary_text,
+                    summary_embedding, embedding_model_version, freshness, relevance_ranking
+                )
+                VALUES ($1, $2, $3, $4, $5::vector, $6, $7, $8)
+                """,
+                [
+                    (
+                        session_id,
+                        page.order_index,
+                        page.raw_text,
+                        page.summary_text,
+                        _vector_literal(page.summary_embedding),
+                        embedding_model_version,
+                        page.freshness,
+                        page.relevance_ranking,
+                    )
+                    for page in pages
+                ],
+            )
+
+    async def get_session_status(self, session_id: UUID) -> SessionStatusResponse | None:
+        status = await self._pool.fetchval(
+            "SELECT status FROM sessions WHERE session_id = $1",
+            session_id,
+        )
+        if status is None:
+            return None
+        return SessionStatusResponse(session_id=session_id, status=SessionStatus(status))
+
+
 class PostgresSearchRepository:
+    """Search read path: cosine ranking over sessions and pages."""
+
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
@@ -66,10 +152,10 @@ class PostgresSearchRepository:
         rows = await self._pool.fetch(
             """
             SELECT session_id, price_base,
-                   1 - (prompt_embedding <=> $1::vector) AS similarity
+                   1 - (session_embedding <=> $1::vector) AS similarity
             FROM sessions
-            WHERE status = 'active'
-            ORDER BY prompt_embedding <=> $1::vector
+            WHERE status = 'active' AND session_embedding IS NOT NULL
+            ORDER BY session_embedding <=> $1::vector
             LIMIT $2
             """,
             _vector_literal(embedding),

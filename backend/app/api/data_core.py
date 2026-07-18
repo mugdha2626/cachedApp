@@ -22,7 +22,13 @@ from app.schemas import (
     RedeemResponse,
     SessionStatusResponse,
 )
-from app.services.data_core import DataCoreNotImplementedError, DataCoreService, IngestCommand
+from app.services.data_core import (
+    DataCoreNotImplementedError,
+    DataCoreService,
+    IngestCommand,
+    SessionNotFoundError,
+    UnsupportedContentTypeError,
+)
 
 router = APIRouter(tags=["data-core"])
 
@@ -32,6 +38,16 @@ T = TypeVar("T")
 async def _invoke(operation: Awaitable[T]) -> T:
     try:
         return await operation
+    except UnsupportedContentTypeError as err:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(err),
+        ) from err
+    except SessionNotFoundError as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(err),
+        ) from err
     except DataCoreNotImplementedError as err:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,

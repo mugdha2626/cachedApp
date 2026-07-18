@@ -4,18 +4,18 @@ from contextlib import asynccontextmanager
 
 from app import x402
 from app.api.data_core import router as data_core_router
-from app.config import SearchSettings
+from app.config import Settings
 from app.db import apply_migrations, close_pool, create_pool
 from app.dependencies import set_data_core_service
-from app.embeddings import OpenAIEmbeddingProvider
-from app.repositories.data_core import PostgresSearchRepository
-from app.services.data_core import SearchDataCoreService, UnimplementedDataCoreService
+from app.repositories.data_core import PostgresDataCoreRepository, PostgresSearchRepository
+from app.services.ai import OpenAIClient
+from app.services.data_core import PostgresDataCoreService, UnimplementedDataCoreService
 from app.wallet import MissingCredentialsError, create_seller_account
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    settings = SearchSettings.from_env()
+    settings = Settings.from_env()
     if settings is None:
         yield
         return
@@ -23,14 +23,11 @@ async def lifespan(_: FastAPI):
     pool = await create_pool(settings.database_url)
     await apply_migrations(pool)
     set_data_core_service(
-        SearchDataCoreService(
-            repository=PostgresSearchRepository(pool),
-            embeddings=OpenAIEmbeddingProvider(
-                api_key=settings.openai_api_key, model=settings.embedding_model
-            ),
-            match_threshold=settings.match_threshold,
-            session_candidate_count=settings.session_candidate_count,
-            preview_count=settings.preview_count,
+        PostgresDataCoreService(
+            repository=PostgresDataCoreRepository(pool),
+            search_repository=PostgresSearchRepository(pool),
+            ai=OpenAIClient(settings),
+            settings=settings,
         )
     )
     try:

@@ -1,18 +1,20 @@
-import asyncio
+"""Tests for the search (query) path of PostgresDataCoreService."""
+
 from decimal import Decimal
 from uuid import uuid4
 
+from app.config import Settings
 from app.repositories.data_core import PageCandidate, SessionCandidate
 from app.schemas import QueryRequest
-from app.services.data_core import SearchDataCoreService
+from app.services.data_core import PostgresDataCoreService
 
 
-class FakeEmbeddings:
-    async def embed(self, text: str) -> list[float]:
-        return [0.1, 0.2]
+class FakeAI:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2] for _ in texts]
 
 
-class FakeRepository:
+class FakeSearchRepository:
     def __init__(self, candidates: list[SessionCandidate]) -> None:
         self.candidates = candidates
         self.quoted = []
@@ -35,26 +37,23 @@ class FakeRepository:
         return uuid4()
 
 
-def make_service(repository: FakeRepository, threshold: float = 0.75):
-    return SearchDataCoreService(
-        repository=repository,
-        embeddings=FakeEmbeddings(),
-        match_threshold=threshold,
-        session_candidate_count=5,
-        preview_count=3,
+def make_service(repository: FakeSearchRepository, threshold: float = 0.75):
+    return PostgresDataCoreService(
+        repository=None,  # unused by the search path
+        search_repository=repository,
+        ai=FakeAI(),
+        settings=Settings(match_threshold=threshold),
     )
 
 
-def test_query_returns_preview_only_match() -> None:
+async def test_query_returns_preview_only_match() -> None:
     session_id = uuid4()
-    repository = FakeRepository(
+    repository = FakeSearchRepository(
         [SessionCandidate(session_id=session_id, price=Decimal("0.05"), similarity=0.91)]
     )
 
-    response = asyncio.run(
-        make_service(repository).query(
-            QueryRequest(buyer_id=uuid4(), query_text="How does vector search work?")
-        )
+    response = await make_service(repository).query(
+        QueryRequest(buyer_id=uuid4(), query_text="How does vector search work?")
     )
 
     assert response.match is True
@@ -67,13 +66,13 @@ def test_query_returns_preview_only_match() -> None:
     assert len(repository.quoted) == 1
 
 
-def test_query_returns_no_match_below_threshold() -> None:
-    repository = FakeRepository(
+async def test_query_returns_no_match_below_threshold() -> None:
+    repository = FakeSearchRepository(
         [SessionCandidate(session_id=uuid4(), price=Decimal("0.05"), similarity=0.5)]
     )
 
-    response = asyncio.run(
-        make_service(repository).query(QueryRequest(buyer_id=uuid4(), query_text="Unknown topic"))
+    response = await make_service(repository).query(
+        QueryRequest(buyer_id=uuid4(), query_text="Unknown topic")
     )
 
     assert response.match is False
@@ -84,11 +83,9 @@ def test_query_returns_no_match_below_threshold() -> None:
     assert repository.quoted == []
 
 
-def test_query_returns_no_match_when_corpus_is_empty() -> None:
-    response = asyncio.run(
-        make_service(FakeRepository([])).query(
-            QueryRequest(buyer_id=uuid4(), query_text="Unknown topic")
-        )
+async def test_query_returns_no_match_when_corpus_is_empty() -> None:
+    response = await make_service(FakeSearchRepository([])).query(
+        QueryRequest(buyer_id=uuid4(), query_text="Unknown topic")
     )
 
     assert response.match is False
