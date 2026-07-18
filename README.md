@@ -1,6 +1,7 @@
-The backend exposes a **Data Core** contract for research ingestion, search,
-paid-content redemption, feedback, and attribution. Two paths are implemented
-today over Postgres/pgvector:
+This is our data core, which is the contract for research ingestion, search,
+paid-content redemption, feedback, and attribution. There are two paths, 
+Ingestion, and Search. Agents will be able to communicate via endpoints exposed, saving their token usage for deep research. 
+Sellers will make money, and buys will save on token costs.
 
 - **Ingestion** (`POST /ingest`, `GET /sessions/{id}/status`): upload →
   parse/normalize → split into pages (markdown headers, token-window fallback) →
